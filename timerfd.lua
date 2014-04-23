@@ -88,6 +88,15 @@ local function add_timer ( dispatcher , start , interval , cb )
 	return timer
 end
 
+local timespec_ptr = ffi.new ( "struct timespec[1]" )
+local rt = ffi.load 'rt'
+
+local get_now = function()
+    rt.clock_gettime(defines.CLOCK_MONOTONIC, timespec_ptr)
+    return tonumber(timespec_ptr[0].tv_sec)   + tonumber(timespec_ptr[0].tv_nsec) / 1000000000
+end
+
 return {
-	add = add_timer ;
+	add = add_timer,
+    now = get_now
 }

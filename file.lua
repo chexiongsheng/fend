@@ -20,7 +20,9 @@ local file_mt = {
 		return "file(" .. tostring(self:getfd()) .. ")"
 	end ;
 	__gc = function ( self )
-		self:close ( )
+        if not self.no_close then --原来的gc，如果fd异常会导致程序退出，fd异常比较常见？比如zookeeper的服务端关闭连接，这个时候操作fd全部返回“Bad file descriptor”
+            ffi.C.close ( self:getfd())
+        end
 	end ;
 }
 
@@ -84,8 +86,11 @@ function file_methods:set_blocking ( bool )
 end
 
 ffi.metatype ( "file_t" , file_mt )
-
+local raw_fd_map = setmetatable({}, {__mode = "v"})
 local function wrap ( fd , no_close )
+    if raw_fd_map[fd] then
+        return raw_fd_map[fd]
+    end
 	local is_luafile = io.type ( fd )
 	if is_luafile then
 		fd = ffi.C.fileno ( fd )
@@ -93,7 +98,9 @@ local function wrap ( fd , no_close )
 			error ( ffi.string ( ffi.C.strerror ( ffi.errno ( ) ) ) )
 		end
 	end
-	return new ( { fd = fd , no_close = no_close or (is_luafile == "closed file") } ) -- COMPAT: Wrap in table for luaffi
+	local file =  new ( { fd = fd , no_close = no_close or (is_luafile == "closed file") } ) -- COMPAT: Wrap in table for luaffi
+    raw_fd_map[fd] = file
+    return file
 end
 
 return {

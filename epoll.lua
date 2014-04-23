@@ -56,8 +56,9 @@ function epoll_methods:add_fd ( file , cbs )
 	local fd = file:getfd()
 	assert ( cbs.error , "No error callback" )
 	local op
-	if self.registered [ file ] then
+	if self.raw_fd_map [ fd ] then --fd更为唯一一点
 		op = defines.EPOLL_CTL_MOD
+        file = self.raw_fd_map[ fd ]
 	else
 		op = defines.EPOLL_CTL_ADD
 	end
@@ -72,7 +73,7 @@ function epoll_methods:add_fd ( file , cbs )
 	__events[0].data.fd = fd
 
 	if ffi.C.epoll_ctl ( self.epfile:getfd() , op , fd , __events ) ~= 0 then
-		error ( ffi.string ( ffi.C.strerror ( ffi.errno ( ) ) ) )
+		error ( ffi.string ( ffi.C.strerror ( ffi.errno ( ) ) ) .. ',fd='..fd..','..debug.traceback())
 	end
 	self.registered [ file ] = cbs
 	self.raw_fd_map [ fd ] = file
@@ -81,7 +82,9 @@ end
 --- Stop watching a file descriptor
 -- fd is the file descriptor to stop watching
 function epoll_methods:del_fd ( file )
+	self.registered [ file ] = nil
 	local fd = file:getfd()
+	self.raw_fd_map [ fd ] = nil --fd操作可以抛异常，但得先释放资源，否则fd异常会导致资源永远无法释放
 	if ffi.C.epoll_ctl ( self.epfile:getfd() , defines.EPOLL_CTL_DEL , fd , nil ) ~= 0 then
 		local err = ffi.errno ( )
 		if err == defines.ENOENT then
@@ -91,8 +94,6 @@ function epoll_methods:del_fd ( file )
 		end
 		return
 	end
-	self.registered [ file ] = nil
-	self.raw_fd_map [ fd ] = nil
 end
 
 function epoll_methods:remove_lock ( )
@@ -145,32 +146,33 @@ function epoll_methods:dispatch ( max_events , timeout , onerror )
 		local fd = self.wait_events[i].data.fd
 		local file = self.raw_fd_map [ fd ]
 		local cbs = self.registered [ file ]
+        local onexception = cbs.exception or onerror
 		--print(string.format("EVENT on %s: %s", tostring(file), event_string(events)))
 		if cbs.oneshot then
+			self.registered [ file ] = nil
+			self.raw_fd_map [ fd ] = nil
 			if ffi.C.epoll_ctl ( self.epfile:getfd() , defines.EPOLL_CTL_DEL , fd , nil ) ~= 0 then
 				self.locked = false
 				error ( ffi.string ( ffi.C.strerror ( ffi.errno ( ) ) ) )
 			end
-			self.registered [ file ] = nil
-			self.raw_fd_map [ fd ] = nil
 		end
 		if bit.band ( events , ffi.C.EPOLLIN ) ~= 0 then
 			if cbs.read then
 				local ok , err = pcall ( cbs.read , file , cbs , "read" )
-				if not ok and onerror ( self , file , cbs , err , "read" ) == false then
+				if not ok and onexception ( self , file , cbs , err , "read" ) == false then
 					error ( err )
 				end
 			end
 		end
 		if bit.band ( events , ffi.C.EPOLLERR ) ~= 0 then
 			local ok , err = pcall ( cbs.error , file , cbs , "error" )
-			if not ok and onerror ( self , file , cbs , err , "error" ) == false then
+			if not ok and onexception ( self , file , cbs , err , "error" ) == false then
 				error ( err )
 			end
 		elseif bit.band ( events , ffi.C.EPOLLOUT ) ~= 0 then
 			if cbs.write then
 				local ok , err = pcall ( cbs.write , file , cbs , "write" )
-				if not ok and onerror ( self , file , cbs , err , "write" ) == false then
+				if not ok and onexception ( self , file , cbs , err , "write" ) == false then
 					error ( err )
 				end
 			end
@@ -178,7 +180,7 @@ function epoll_methods:dispatch ( max_events , timeout , onerror )
 		if bit.band ( events , ffi.C.EPOLLHUP ) ~= 0 then
 			if cbs.close then
 				local ok , err = pcall ( cbs.close , file , cbs , "close" )
-				if not ok and onerror ( self , file , cbs , err , "close" ) == false then
+				if not ok and onexception ( self , file , cbs , err , "close" ) == false then
 					error ( err )
 				end
 			else
@@ -187,12 +189,12 @@ function epoll_methods:dispatch ( max_events , timeout , onerror )
 		elseif bit.band ( events , ffi.C.EPOLLRDHUP ) ~= 0 then
 			if cbs.rdclose then
 				local ok , err = pcall ( cbs.rdclose , file , cbs , "rdclose" )
-				if not ok and onerror ( self , file , cbs , err , "rdclose" ) == false then
+				if not ok and onexception ( self , file , cbs , err , "rdclose" ) == false then
 					error ( err )
 				end
 			elseif cbs.close then
 				local ok , err = pcall ( cbs.close , file , cbs , "close" )
-				if not ok and onerror ( self , file , cbs , err , "close" ) == false then
+				if not ok and onexception ( self , file , cbs , err , "close" ) == false then
 					error ( err )
 				end
 			else
@@ -206,6 +208,7 @@ end
 epoll_methods.add_signal = signalfd.add
 epoll_methods.del_signal = signalfd.del
 epoll_methods.add_timer  = timerfd.add
+epoll_methods.now = timerfd.now
 epoll_methods.add_path   = inotify.add
 
 return new_epoll
