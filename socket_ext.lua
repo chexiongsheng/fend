@@ -52,7 +52,7 @@ function sock_methods:__recv (buff, len, flags, timeout, fill_all)
         self.__recv_cs:enter()
     else
         assert(self.__recv_tid == nil, 'another thread recving!')
-        self.__recv_tid = threadpool.running.id
+        self.__recv_tid = threadpool.running()
     end
 
 	local got, rerr = 0
@@ -101,7 +101,7 @@ function sock_methods:send(buff , len , flags, timeout)
         self.__send_cs:enter()
     else
         assert(self.__send_tid == nil, 'another thread sending!')
-        self.__send_tid = threadpool.running.id
+        self.__send_tid = threadpool.running()
     end
 
 	if not ffi.istype ( "char*" , buff ) then
@@ -142,7 +142,7 @@ function sock_methods:accept(with_sockaddr, timeout)
         self.__recv_cs:enter()
     else
         assert(self.__recv_tid == nil, 'another thread recving!')
-        self.__recv_tid = threadpool.running.id
+        self.__recv_tid = threadpool.running()
     end
 
     local client , sockaddr , sockaddr_len
